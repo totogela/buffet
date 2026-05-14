@@ -1,0 +1,31 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from routers import ventas, gastos, caja, proveedores, cuentas
+
+app = FastAPI(
+    title="Buffet Escolar API",
+    description="Sistema de gestión para buffet escolar",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # En producción reemplazar con el dominio del frontend
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(ventas.router)
+app.include_router(gastos.router)
+app.include_router(caja.router)
+app.include_router(proveedores.router)
+app.include_router(cuentas.router)
+
+@app.get("/")
+def root():
+    return {"status": "ok", "app": "Buffet Escolar API v1.0"}
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}

@@ -56,6 +56,7 @@ def calcular_montos_sistema(caja: dict) -> dict:
     )
     ventas_efectivo = sum(float(v["monto"]) for v in ventas.data if v.get("metodo_pago") == "efectivo")
     ventas_transferencia = sum(float(v["monto"]) for v in ventas.data if v.get("metodo_pago") == "transferencia")
+    cantidad_ventas = len([v for v in ventas.data if not v.get("anulada")])
 
     gastos = (
         supabase.table("gastos")
@@ -80,6 +81,7 @@ def calcular_montos_sistema(caja: dict) -> dict:
         "ventas_transferencia": round(ventas_transferencia, 2),
         "gastos_efectivo": round(gastos_efectivo, 2),
         "gastos_transferencia": round(gastos_transferencia, 2),
+        "cantidad_ventas": cantidad_ventas,
     }
 
 

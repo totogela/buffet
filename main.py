@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import ventas, gastos, caja, proveedores, cuentas
+from routers.demo import demo_app
 
 app = FastAPI(
     title="Buffet Escolar API",
@@ -10,7 +11,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En producción reemplazar con el dominio del frontend
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -21,6 +22,7 @@ app.include_router(gastos.router)
 app.include_router(caja.router)
 app.include_router(proveedores.router)
 app.include_router(cuentas.router)
+app.mount("/demo", demo_app)
 
 @app.get("/")
 def root():

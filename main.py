@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import ventas, gastos, caja, proveedores, cuentas
-from routers.demo import demo_app
+from routers.uni import uni_app
 
 app = FastAPI(
     title="Buffet Escolar API",
@@ -22,7 +22,7 @@ app.include_router(gastos.router)
 app.include_router(caja.router)
 app.include_router(proveedores.router)
 app.include_router(cuentas.router)
-app.mount("/demo", demo_app)
+app.mount("/uni", uni_app)
 
 @app.get("/")
 def root():

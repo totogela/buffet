@@ -38,32 +38,61 @@ def ventas_hoy():
     res = supabase.table("resumen_ventas_diario").select("*").eq("dia", hoy).execute()
     ventas = res.data[0] if res.data else {"dia": hoy, "cantidad_ventas": 0, "total": 0, "total_efectivo": 0, "total_transferencia": 0}
 
-    gastos_res = supabase.table("gastos").select("monto").gte("fecha", desde).lte("fecha", hasta).execute()
-    total_gastos = sum(float(g["monto"]) for g in gastos_res.data)
+    gastos_res = supabase.table("gastos").select("monto, metodo_pago").gte("fecha", desde).lte("fecha", hasta).execute()
+    gastos_efectivo = sum(float(g["monto"]) for g in gastos_res.data if g.get("metodo_pago", "efectivo") == "efectivo")
+    gastos_transferencia = sum(float(g["monto"]) for g in gastos_res.data if g.get("metodo_pago") == "transferencia")
+    total_gastos = round(gastos_efectivo + gastos_transferencia, 2)
 
     total_ventas = float(ventas.get("total", 0))
     total_efectivo = float(ventas.get("total_efectivo", 0))
     total_transferencia = float(ventas.get("total_transferencia", 0))
     ganancia_neta = round(total_ventas - total_gastos, 2)
-    efectivo_neto = round(total_efectivo - total_gastos, 2)
+    efectivo_neto = round(total_efectivo - gastos_efectivo, 2)
+    transferencia_neta = round(total_transferencia - gastos_transferencia, 2)
 
     return {
         **ventas,
-        "total_gastos": round(total_gastos, 2),
+        "total_gastos": total_gastos,
         "ganancia_neta": ganancia_neta,
         "efectivo_neto": efectivo_neto,
-        "total_transferencia": round(total_transferencia, 2),
+        "total_transferencia": transferencia_neta,
     }
 
 @router.get("/resumen")
 def resumen_ventas(dias: int = 30):
-    from datetime import datetime, timedelta, timezone
-    tz_ar = timezone(timedelta(hours=-3))
-    desde = (datetime.now(tz_ar) - timedelta(days=dias - 1)).date().isoformat()
-    res = supabase.table("resumen_ventas_diario").select("*").gte("dia", desde).order("dia", desc=True).execute()
+    res = supabase.table("resumen_ventas_diario").select("*").limit(dias).execute()
     return res.data
 
 @router.get("/recientes")
 def ventas_recientes(limite: int = 20):
     res = supabase.table("ventas").select("*").eq("anulada", False).order("fecha", desc=True).limit(limite).execute()
     return res.data
+
+
+@router.get("/dia/{fecha}")
+def ventas_por_dia(fecha: str):
+    """Devuelve ventas, gastos y cierre de un día específico. fecha: YYYY-MM-DD"""
+    from datetime import datetime, timedelta, timezone
+    tz_ar = timezone(timedelta(hours=-3))
+    desde = f"{fecha}T00:00:00-03:00"
+    hasta = f"{fecha}T23:59:59-03:00"
+
+    ventas = supabase.table("ventas").select("*").gte("fecha", desde).lte("fecha", hasta).order("fecha", desc=True).execute()
+    gastos = supabase.table("gastos").select("*, categorias_gasto(nombre)").gte("fecha", desde).lte("fecha", hasta).order("fecha", desc=True).execute()
+    cierre = supabase.table("cierres_caja").select("*").or_(f"fecha.eq.{fecha},cerrado_en.gte.{desde}").execute()
+
+    total_ventas = sum(float(v["monto"]) for v in ventas.data if not v.get("anulada"))
+    total_gastos = sum(float(g["monto"]) for g in gastos.data)
+
+    return {
+        "fecha": fecha,
+        "ventas": ventas.data,
+        "gastos": gastos.data,
+        "cierres": cierre.data,
+        "resumen": {
+            "total_ventas": round(total_ventas, 2),
+            "total_gastos": round(total_gastos, 2),
+            "ganancia": round(total_ventas - total_gastos, 2),
+            "cantidad_ventas": len([v for v in ventas.data if not v.get("anulada")]),
+        }
+    }

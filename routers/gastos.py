@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from database import supabase
+from db_context import get_db
 
 router = APIRouter(prefix="/gastos", tags=["Gastos"])
 
@@ -20,7 +20,7 @@ def crear_gasto(gasto: GastoCreate):
     if "categoria_id" in payload and not payload["categoria_id"]:
         del payload["categoria_id"]
     try:
-        res = supabase.table("gastos").insert(payload).execute()
+        res = get_db().table("gastos").insert(payload).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al insertar en Supabase: {str(e)}")
     if not res.data:
@@ -35,7 +35,7 @@ def listar_gastos(dias: int = 30):
     desde_ar = (ahora_ar - timedelta(days=dias - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
     hasta_ar = ahora_ar.replace(hour=23, minute=59, second=59, microsecond=0)
     res = (
-        supabase.table("gastos")
+        get_db().table("gastos")
         .select("*, categorias_gasto(nombre)")
         .gte("fecha", desde_ar.isoformat())
         .lte("fecha", hasta_ar.isoformat())
@@ -46,7 +46,7 @@ def listar_gastos(dias: int = 30):
 
 @router.get("/categorias")
 def listar_categorias():
-    res = supabase.table("categorias_gasto").select("*").execute()
+    res = get_db().table("categorias_gasto").select("*").execute()
     return res.data
 
 @router.get("/diagnostico")
@@ -54,7 +54,7 @@ def diagnostico_gastos():
     """Endpoint de diagnóstico: verifica conexión con la tabla gastos"""
     resultado = {}
     try:
-        res = supabase.table("gastos").select("id, monto, fecha").limit(1).execute()
+        res = get_db().table("gastos").select("id, monto, fecha").limit(1).execute()
         resultado["lectura"] = "OK"
         resultado["filas_encontradas"] = len(res.data)
     except Exception as e:
@@ -62,13 +62,13 @@ def diagnostico_gastos():
 
     try:
         import uuid
-        res = supabase.table("gastos").insert({
+        res = get_db().table("gastos").insert({
             "monto": 0.01,
             "descripcion": "TEST_DIAGNOSTICO"
         }).execute()
         if res.data:
             # Eliminar el registro de prueba
-            supabase.table("gastos").delete().eq("id", res.data[0]["id"]).execute()
+            get_db().table("gastos").delete().eq("id", res.data[0]["id"]).execute()
             resultado["escritura"] = "OK"
         else:
             resultado["escritura"] = "ERROR: Supabase no devolvió datos (posible RLS bloqueando INSERT)"
@@ -80,7 +80,7 @@ def diagnostico_gastos():
 
 @router.delete("/{gasto_id}")
 def eliminar_gasto(gasto_id: str):
-    res = supabase.table("gastos").delete().eq("id", gasto_id).execute()
+    res = get_db().table("gastos").delete().eq("id", gasto_id).execute()
     if not res.data:
         raise HTTPException(404, "Gasto no encontrado")
     return {"ok": True}

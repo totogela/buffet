@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from database import supabase
+from db_context import get_db
 
 router = APIRouter(prefix="/cuentas", tags=["Cuentas Corrientes"])
 
@@ -22,13 +22,13 @@ class MovimientoCreate(BaseModel):
 
 @router.get("/")
 def listar_clientes():
-    res = supabase.table("saldo_clientes").select("*").order("nombre").execute()
+    res = get_db().table("saldo_clientes").select("*").order("nombre").execute()
     return res.data
 
 
 @router.get("/resumen")
 def resumen_cuentas():
-    res = supabase.table("saldo_clientes").select("*").execute()
+    res = get_db().table("saldo_clientes").select("*").execute()
     total_deuda = sum(r["saldo"] for r in res.data if r["tipo"] == "deuda" and r["saldo"] > 0)
     total_favor = sum(r["saldo"] for r in res.data if r["tipo"] == "favor" and r["saldo"] > 0)
     return {
@@ -49,14 +49,14 @@ def crear_cliente(data: ClienteCreate):
     }
     if data.telefono:
         payload["telefono"] = data.telefono
-    res = supabase.table("clientes").insert(payload).execute()
+    res = get_db().table("clientes").insert(payload).execute()
     return res.data[0]
 
 
 @router.delete("/clientes/{cliente_id}")
 def eliminar_cliente(cliente_id: str):
-    supabase.table("cuentas_corrientes").delete().eq("cliente_id", cliente_id).execute()
-    res = supabase.table("clientes").delete().eq("id", cliente_id).execute()
+    get_db().table("cuentas_corrientes").delete().eq("cliente_id", cliente_id).execute()
+    res = get_db().table("clientes").delete().eq("id", cliente_id).execute()
     if not res.data:
         raise HTTPException(404, "Cliente no encontrado")
     return {"ok": True}
@@ -64,7 +64,7 @@ def eliminar_cliente(cliente_id: str):
 
 @router.get("/clientes/{cliente_id}/movimientos")
 def movimientos_cliente(cliente_id: str):
-    res = supabase.table("cuentas_corrientes").select("*").eq("cliente_id", cliente_id).order("fecha", desc=True).execute()
+    res = get_db().table("cuentas_corrientes").select("*").eq("cliente_id", cliente_id).order("fecha", desc=True).execute()
     return res.data
 
 
@@ -82,13 +82,13 @@ def registrar_movimiento(data: MovimientoCreate):
     }
     if data.descripcion:
         payload["descripcion"] = data.descripcion
-    res = supabase.table("cuentas_corrientes").insert(payload).execute()
+    res = get_db().table("cuentas_corrientes").insert(payload).execute()
     return res.data[0]
 
 
 @router.delete("/movimientos/{mov_id}")
 def eliminar_movimiento(mov_id: str):
-    res = supabase.table("cuentas_corrientes").delete().eq("id", mov_id).execute()
+    res = get_db().table("cuentas_corrientes").delete().eq("id", mov_id).execute()
     if not res.data:
         raise HTTPException(404, "Movimiento no encontrado")
     return {"ok": True}
@@ -97,13 +97,13 @@ def eliminar_movimiento(mov_id: str):
 # Compat con frontend viejo
 @router.get("/deudores")
 def clientes_con_deuda():
-    res = supabase.table("saldo_clientes").select("*").execute()
+    res = get_db().table("saldo_clientes").select("*").execute()
     return [r for r in res.data if r["tipo"] == "deuda" and r["saldo"] > 0]
 
 
 @router.get("/total-deuda")
 def total_deuda():
-    res = supabase.table("saldo_clientes").select("saldo", "tipo").execute()
+    res = get_db().table("saldo_clientes").select("saldo", "tipo").execute()
     deudores = [r for r in res.data if r["tipo"] == "deuda" and r["saldo"] > 0]
     return {
         "total_deuda": sum(r["saldo"] for r in deudores),

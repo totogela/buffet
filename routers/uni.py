@@ -1,4 +1,5 @@
-from database_demo import supabase_demo as supabase
+from db_context import set_db, reset_db
+from database_demo import supabase_demo
 import routers.ventas as v_mod
 import routers.gastos as g_mod
 import routers.caja as c_mod
@@ -11,24 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 uni_app = FastAPI()
 uni_app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-_orig = {
-    'v': v_mod.supabase, 'g': g_mod.supabase,
-    'c': c_mod.supabase, 'p': p_mod.supabase, 'cu': cu_mod.supabase
-}
-
 @uni_app.middleware("http")
 async def inject_uni_db(request, call_next):
-    v_mod.supabase = supabase
-    g_mod.supabase = supabase
-    c_mod.supabase = supabase
-    p_mod.supabase = supabase
-    cu_mod.supabase = supabase
-    response = await call_next(request)
-    v_mod.supabase = _orig['v']
-    g_mod.supabase = _orig['g']
-    c_mod.supabase = _orig['c']
-    p_mod.supabase = _orig['p']
-    cu_mod.supabase = _orig['cu']
+    set_db(supabase_demo)
+    try:
+        response = await call_next(request)
+    finally:
+        reset_db()
     return response
 
 uni_app.include_router(v_mod.router)

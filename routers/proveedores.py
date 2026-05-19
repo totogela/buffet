@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from database import supabase
+from db_context import get_db
 
 router = APIRouter(prefix="/proveedores", tags=["Proveedores"])
 
@@ -97,7 +97,7 @@ def productos_desde_texto(texto: str, margen: float) -> List[BoletaProducto]:
 
 def obtener_o_crear_producto(proveedor_id: str, nombre: str) -> dict:
     existente = (
-        supabase.table("productos_proveedor")
+        get_db().table("productos_proveedor")
         .select("*")
         .eq("proveedor_id", proveedor_id)
         .ilike("nombre", nombre)
@@ -108,7 +108,7 @@ def obtener_o_crear_producto(proveedor_id: str, nombre: str) -> dict:
         return existente.data[0]
 
     creado = (
-        supabase.table("productos_proveedor")
+        get_db().table("productos_proveedor")
         .insert({"proveedor_id": proveedor_id, "nombre": nombre})
         .execute()
     )
@@ -117,9 +117,9 @@ def obtener_o_crear_producto(proveedor_id: str, nombre: str) -> dict:
 
 @router.get("/")
 def listar_proveedores():
-    proveedores = supabase.table("proveedores").select("*").order("nombre").execute()
+    proveedores = get_db().table("proveedores").select("*").order("nombre").execute()
     try:
-        saldos = supabase.table("saldo_proveedores").select("*").execute()
+        saldos = get_db().table("saldo_proveedores").select("*").execute()
         saldo_por_proveedor = {s["proveedor_id"]: s for s in saldos.data}
     except Exception:
         saldo_por_proveedor = {}
@@ -135,13 +135,13 @@ def listar_proveedores():
 
 @router.post("/")
 def crear_proveedor(data: ProveedorCreate):
-    res = supabase.table("proveedores").insert(data.model_dump(exclude_none=True)).execute()
+    res = get_db().table("proveedores").insert(data.model_dump(exclude_none=True)).execute()
     return res.data[0]
 
 
 @router.delete("/{proveedor_id}")
 def eliminar_proveedor(proveedor_id: str):
-    res = supabase.table("proveedores").delete().eq("id", proveedor_id).execute()
+    res = get_db().table("proveedores").delete().eq("id", proveedor_id).execute()
     if not res.data:
         raise HTTPException(404, "Proveedor no encontrado")
     return {"ok": True}
@@ -149,20 +149,20 @@ def eliminar_proveedor(proveedor_id: str):
 
 @router.get("/{proveedor_id}/productos")
 def productos_proveedor(proveedor_id: str):
-    res = supabase.table("ultimo_precio_producto").select("*").eq("proveedor_id", proveedor_id).execute()
+    res = get_db().table("ultimo_precio_producto").select("*").eq("proveedor_id", proveedor_id).execute()
     return res.data
 
 
 @router.post("/productos")
 def crear_producto(data: ProductoCreate):
-    res = supabase.table("productos_proveedor").insert(data.model_dump()).execute()
+    res = get_db().table("productos_proveedor").insert(data.model_dump()).execute()
     return res.data[0]
 
 
 @router.post("/precios")
 def registrar_precio(data: PrecioCreate):
     precio_venta = calcular_precio(data.precio_costo, data.margen_porcentaje)
-    res = supabase.table("historial_precios").insert(
+    res = get_db().table("historial_precios").insert(
         {
             "producto_id": data.producto_id,
             "precio_costo": data.precio_costo,
@@ -223,11 +223,11 @@ def cargar_boleta(data: BoletaCarga):
 
 @router.get("/precios/alertas")
 def alertas_precios():
-    productos = supabase.table("ultimo_precio_producto").select("producto_id, producto, proveedor, precio_costo").execute()
+    productos = get_db().table("ultimo_precio_producto").select("producto_id, producto, proveedor, precio_costo").execute()
     alertas = []
     for p in productos.data:
         historial = (
-            supabase.table("historial_precios")
+            get_db().table("historial_precios")
             .select("precio_costo, fecha")
             .eq("producto_id", p["producto_id"])
             .order("fecha", desc=True)
@@ -252,7 +252,7 @@ def calculadora_precio(costo: float, margen: float):
 def facturas_proveedor(proveedor_id: str):
     try:
         res = (
-            supabase.table("proveedor_facturas")
+            get_db().table("proveedor_facturas")
             .select("*")
             .eq("proveedor_id", proveedor_id)
             .order("fecha_emision", desc=True)
@@ -267,7 +267,7 @@ def facturas_proveedor(proveedor_id: str):
 def crear_factura(data: FacturaProveedorCreate):
     try:
         res = (
-            supabase.table("proveedor_facturas")
+            get_db().table("proveedor_facturas")
             .insert(
                 {
                     **data.model_dump(exclude_none=True),
@@ -286,7 +286,7 @@ def crear_factura(data: FacturaProveedorCreate):
 @router.post("/facturas/{factura_id}/pagos")
 def registrar_pago_factura(factura_id: str, data: PagoFacturaCreate):
     try:
-        factura_res = supabase.table("proveedor_facturas").select("*").eq("id", factura_id).execute()
+        factura_res = get_db().table("proveedor_facturas").select("*").eq("id", factura_id).execute()
         if not factura_res.data:
             raise HTTPException(404, "Factura no encontrada")
 
@@ -296,7 +296,7 @@ def registrar_pago_factura(factura_id: str, data: PagoFacturaCreate):
         estado = "pagada" if pagado >= total else "parcial"
 
         pago = (
-            supabase.table("proveedor_pagos_factura")
+            get_db().table("proveedor_pagos_factura")
             .insert(
                 {
                     "factura_id": factura_id,
@@ -308,7 +308,7 @@ def registrar_pago_factura(factura_id: str, data: PagoFacturaCreate):
             .execute()
         )
         actualizada = (
-            supabase.table("proveedor_facturas")
+            get_db().table("proveedor_facturas")
             .update({"monto_pagado": min(pagado, total), "estado": estado})
             .eq("id", factura_id)
             .execute()

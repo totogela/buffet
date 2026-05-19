@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import date
-from database import supabase
+from db_context import get_db
 
 router = APIRouter(prefix="/ventas", tags=["Ventas"])
 
@@ -13,7 +13,7 @@ class VentaCreate(BaseModel):
 def crear_venta(venta: VentaCreate):
     if venta.metodo_pago not in ["efectivo", "transferencia"]:
         raise HTTPException(400, "metodo_pago debe ser 'efectivo' o 'transferencia'")
-    res = supabase.table("ventas").insert({
+    res = get_db().table("ventas").insert({
         "monto": venta.monto,
         "metodo_pago": venta.metodo_pago
     }).execute()
@@ -21,7 +21,7 @@ def crear_venta(venta: VentaCreate):
 
 @router.delete("/{venta_id}/anular")
 def anular_venta(venta_id: str):
-    res = supabase.table("ventas").update({"anulada": True}).eq("id", venta_id).execute()
+    res = get_db().table("ventas").update({"anulada": True}).eq("id", venta_id).execute()
     if not res.data:
         raise HTTPException(404, "Venta no encontrada")
     return {"ok": True}
@@ -35,10 +35,10 @@ def ventas_hoy():
     desde = ahora_ar.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     hasta = ahora_ar.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
 
-    res = supabase.table("resumen_ventas_diario").select("*").eq("dia", hoy).execute()
+    res = get_db().table("resumen_ventas_diario").select("*").eq("dia", hoy).execute()
     ventas = res.data[0] if res.data else {"dia": hoy, "cantidad_ventas": 0, "total": 0, "total_efectivo": 0, "total_transferencia": 0}
 
-    gastos_res = supabase.table("gastos").select("monto, metodo_pago").gte("fecha", desde).lte("fecha", hasta).execute()
+    gastos_res = get_db().table("gastos").select("monto, metodo_pago").gte("fecha", desde).lte("fecha", hasta).execute()
     gastos_efectivo = sum(float(g["monto"]) for g in gastos_res.data if g.get("metodo_pago", "efectivo") == "efectivo")
     gastos_transferencia = sum(float(g["monto"]) for g in gastos_res.data if g.get("metodo_pago") == "transferencia")
     total_gastos = round(gastos_efectivo + gastos_transferencia, 2)
@@ -60,12 +60,12 @@ def ventas_hoy():
 
 @router.get("/resumen")
 def resumen_ventas(dias: int = 30):
-    res = supabase.table("resumen_ventas_diario").select("*").limit(dias).execute()
+    res = get_db().table("resumen_ventas_diario").select("*").limit(dias).execute()
     return res.data
 
 @router.get("/recientes")
 def ventas_recientes(limite: int = 20):
-    res = supabase.table("ventas").select("*").eq("anulada", False).order("fecha", desc=True).limit(limite).execute()
+    res = get_db().table("ventas").select("*").eq("anulada", False).order("fecha", desc=True).limit(limite).execute()
     return res.data
 
 
@@ -77,9 +77,9 @@ def ventas_por_dia(fecha: str):
     desde = f"{fecha}T00:00:00-03:00"
     hasta = f"{fecha}T23:59:59-03:00"
 
-    ventas = supabase.table("ventas").select("*").gte("fecha", desde).lte("fecha", hasta).order("fecha", desc=True).execute()
-    gastos = supabase.table("gastos").select("*, categorias_gasto(nombre)").gte("fecha", desde).lte("fecha", hasta).order("fecha", desc=True).execute()
-    cierre = supabase.table("cierres_caja").select("*").or_(f"fecha.eq.{fecha},cerrado_en.gte.{desde}").execute()
+    ventas = get_db().table("ventas").select("*").gte("fecha", desde).lte("fecha", hasta).order("fecha", desc=True).execute()
+    gastos = get_db().table("gastos").select("*, categorias_gasto(nombre)").gte("fecha", desde).lte("fecha", hasta).order("fecha", desc=True).execute()
+    cierre = get_db().table("cierres_caja").select("*").or_(f"fecha.eq.{fecha},cerrado_en.gte.{desde}").execute()
 
     total_ventas = sum(float(v["monto"]) for v in ventas.data if not v.get("anulada"))
     total_gastos = sum(float(g["monto"]) for g in gastos.data)
@@ -106,8 +106,8 @@ def ventas_por_mes(year: int, month: int):
     ultimo_dia = calendar.monthrange(year, month)[1]
     hasta = f"{year}-{str(month).zfill(2)}-{ultimo_dia}T23:59:59-03:00"
 
-    ventas = supabase.table("ventas").select("monto, metodo_pago, fecha, anulada").gte("fecha", desde).lte("fecha", hasta).execute()
-    gastos = supabase.table("gastos").select("monto, fecha, descripcion").gte("fecha", desde).lte("fecha", hasta).execute()
+    ventas = get_db().table("ventas").select("monto, metodo_pago, fecha, anulada").gte("fecha", desde).lte("fecha", hasta).execute()
+    gastos = get_db().table("gastos").select("monto, fecha, descripcion").gte("fecha", desde).lte("fecha", hasta).execute()
 
     # Agrupar por día
     from datetime import datetime, timezone, timedelta

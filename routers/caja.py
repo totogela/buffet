@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from database import supabase
+from db_context import get_db
 
 router = APIRouter(prefix="/caja", tags=["Caja"])
 
@@ -32,7 +32,7 @@ def fecha_hoy() -> str:
 
 def caja_abierta_actual():
     res = (
-        supabase.table("cierres_caja")
+        get_db().table("cierres_caja")
         .select("*")
         .eq("cerrada", False)
         .order("abierto_en", desc=True)
@@ -47,7 +47,7 @@ def calcular_montos_sistema(caja: dict) -> dict:
     hasta = ahora_iso()
 
     ventas = (
-        supabase.table("ventas")
+        get_db().table("ventas")
         .select("monto, metodo_pago")
         .eq("anulada", False)
         .gte("fecha", desde)
@@ -56,10 +56,9 @@ def calcular_montos_sistema(caja: dict) -> dict:
     )
     ventas_efectivo = sum(float(v["monto"]) for v in ventas.data if v.get("metodo_pago") == "efectivo")
     ventas_transferencia = sum(float(v["monto"]) for v in ventas.data if v.get("metodo_pago") == "transferencia")
-    cantidad_ventas = len([v for v in ventas.data if not v.get("anulada")])
 
     gastos = (
-        supabase.table("gastos")
+        get_db().table("gastos")
         .select("monto, metodo_pago")
         .gte("fecha", desde)
         .lte("fecha", hasta)
@@ -81,7 +80,6 @@ def calcular_montos_sistema(caja: dict) -> dict:
         "ventas_transferencia": round(ventas_transferencia, 2),
         "gastos_efectivo": round(gastos_efectivo, 2),
         "gastos_transferencia": round(gastos_transferencia, 2),
-        "cantidad_ventas": cantidad_ventas,
     }
 
 
@@ -97,7 +95,7 @@ def abrir_caja(data: AbrirCaja):
         "abierto_en": ahora_iso(),
         "nota_apertura": data.nota_apertura,
     }
-    res = supabase.table("cierres_caja").insert(payload).execute()
+    res = get_db().table("cierres_caja").insert(payload).execute()
     return res.data[0]
 
 
@@ -117,7 +115,7 @@ def _cerrar(caja: dict, data: CerrarCaja):
         "cerrada": True,
         "cerrado_en": ahora_iso(),
     }
-    res = supabase.table("cierres_caja").update(cambios).eq("id", caja["id"]).execute()
+    res = get_db().table("cierres_caja").update(cambios).eq("id", caja["id"]).execute()
     return res.data[0]
 
 
@@ -131,7 +129,7 @@ def cerrar_caja_actual(data: CerrarCaja):
 
 @router.post("/cerrar/{caja_id}")
 def cerrar_caja_por_id(caja_id: str, data: CerrarCaja):
-    res = supabase.table("cierres_caja").select("*").eq("id", caja_id).execute()
+    res = get_db().table("cierres_caja").select("*").eq("id", caja_id).execute()
     if not res.data:
         raise HTTPException(404, "Caja no encontrada")
     caja = res.data[0]
@@ -147,7 +145,7 @@ def estado_caja_actual():
         montos = calcular_montos_sistema(abierta)
         return {**abierta, "abierta": True, "monto_sistema_actual": montos["monto_sistema"], **montos}
     ultimo = (
-        supabase.table("cierres_caja")
+        get_db().table("cierres_caja")
         .select("*")
         .order("abierto_en", desc=True)
         .limit(1)
@@ -159,7 +157,7 @@ def estado_caja_actual():
 @router.get("/historial")
 def historial_cierres(limite: int = 50):
     res = (
-        supabase.table("cierres_caja")
+        get_db().table("cierres_caja")
         .select("*")
         .order("abierto_en", desc=True)
         .limit(limite)

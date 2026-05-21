@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import ventas, gastos, caja, proveedores, cuentas
+from routers import auth, ventas, gastos, caja, proveedores, cuentas
 from routers.uni import uni_app
 
 app = FastAPI(
@@ -17,6 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(ventas.router)
 app.include_router(gastos.router)
 app.include_router(caja.router)

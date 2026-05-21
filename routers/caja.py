@@ -1,10 +1,11 @@
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from db_context import get_db
+from auth import usuario_actual
 
 router = APIRouter(prefix="/caja", tags=["Caja"])
 
@@ -30,11 +31,12 @@ def fecha_hoy() -> str:
     return date.today().isoformat()
 
 
-def caja_abierta_actual():
+def caja_abierta_actual(user: dict):
     res = (
         get_db().table("cierres_caja")
         .select("*")
         .eq("cerrada", False)
+        .eq("usuario_id", user["id"])
         .order("abierto_en", desc=True)
         .limit(1)
         .execute()
@@ -42,7 +44,7 @@ def caja_abierta_actual():
     return res.data[0] if res.data else None
 
 
-def calcular_montos_sistema(caja: dict) -> dict:
+def calcular_montos_sistema(caja: dict, user: dict) -> dict:
     desde = caja.get("abierto_en") or f"{caja.get('fecha', fecha_hoy())}T00:00:00"
     hasta = ahora_iso()
 
@@ -50,6 +52,7 @@ def calcular_montos_sistema(caja: dict) -> dict:
         get_db().table("ventas")
         .select("monto, metodo_pago")
         .eq("anulada", False)
+        .eq("usuario_id", user["id"])
         .gte("fecha", desde)
         .lte("fecha", hasta)
         .execute()
@@ -60,6 +63,7 @@ def calcular_montos_sistema(caja: dict) -> dict:
     gastos = (
         get_db().table("gastos")
         .select("monto, metodo_pago")
+        .eq("usuario_id", user["id"])
         .gte("fecha", desde)
         .lte("fecha", hasta)
         .execute()
@@ -84,8 +88,8 @@ def calcular_montos_sistema(caja: dict) -> dict:
 
 
 @router.post("/abrir")
-def abrir_caja(data: AbrirCaja):
-    existente = caja_abierta_actual()
+def abrir_caja(data: AbrirCaja, user: dict = Depends(usuario_actual)):
+    existente = caja_abierta_actual(user)
     if existente:
         raise HTTPException(400, "Ya hay una caja abierta. Cerrala antes de abrir otra.")
     payload = {
@@ -94,13 +98,14 @@ def abrir_caja(data: AbrirCaja):
         "cerrada": False,
         "abierto_en": ahora_iso(),
         "nota_apertura": data.nota_apertura,
+        "usuario_id": user["id"],
     }
     res = get_db().table("cierres_caja").insert(payload).execute()
     return res.data[0]
 
 
-def _cerrar(caja: dict, data: CerrarCaja):
-    montos = calcular_montos_sistema(caja)
+def _cerrar(caja: dict, data: CerrarCaja, user: dict):
+    montos = calcular_montos_sistema(caja, user)
     cambios = {
         "monto_contado": data.monto_contado,
         "monto_contado_efectivo": data.monto_contado_efectivo,
@@ -120,33 +125,34 @@ def _cerrar(caja: dict, data: CerrarCaja):
 
 
 @router.post("/cerrar")
-def cerrar_caja_actual(data: CerrarCaja):
-    caja = caja_abierta_actual()
+def cerrar_caja_actual(data: CerrarCaja, user: dict = Depends(usuario_actual)):
+    caja = caja_abierta_actual(user)
     if not caja:
         raise HTTPException(404, "No hay una caja abierta para cerrar")
-    return _cerrar(caja, data)
+    return _cerrar(caja, data, user)
 
 
 @router.post("/cerrar/{caja_id}")
-def cerrar_caja_por_id(caja_id: str, data: CerrarCaja):
-    res = get_db().table("cierres_caja").select("*").eq("id", caja_id).execute()
+def cerrar_caja_por_id(caja_id: str, data: CerrarCaja, user: dict = Depends(usuario_actual)):
+    res = get_db().table("cierres_caja").select("*").eq("id", caja_id).eq("usuario_id", user["id"]).execute()
     if not res.data:
         raise HTTPException(404, "Caja no encontrada")
     caja = res.data[0]
     if caja.get("cerrada"):
         raise HTTPException(400, "Esta caja ya fue cerrada")
-    return _cerrar(caja, data)
+    return _cerrar(caja, data, user)
 
 
 @router.get("/hoy")
-def estado_caja_actual():
-    abierta = caja_abierta_actual()
+def estado_caja_actual(user: dict = Depends(usuario_actual)):
+    abierta = caja_abierta_actual(user)
     if abierta:
-        montos = calcular_montos_sistema(abierta)
+        montos = calcular_montos_sistema(abierta, user)
         return {**abierta, "abierta": True, "monto_sistema_actual": montos["monto_sistema"], **montos}
     ultimo = (
         get_db().table("cierres_caja")
         .select("*")
+        .eq("usuario_id", user["id"])
         .order("abierto_en", desc=True)
         .limit(1)
         .execute()
@@ -155,10 +161,11 @@ def estado_caja_actual():
 
 
 @router.get("/historial")
-def historial_cierres(limite: int = 50):
+def historial_cierres(limite: int = 50, user: dict = Depends(usuario_actual)):
     res = (
         get_db().table("cierres_caja")
         .select("*")
+        .eq("usuario_id", user["id"])
         .order("abierto_en", desc=True)
         .limit(limite)
         .execute()

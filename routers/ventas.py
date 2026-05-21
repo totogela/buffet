@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from datetime import date
 from db_context import get_db
+from auth import usuario_actual
 
 router = APIRouter(prefix="/ventas", tags=["Ventas"])
 
@@ -10,24 +11,25 @@ class VentaCreate(BaseModel):
     metodo_pago: str  # "efectivo" | "transferencia"
 
 @router.post("/")
-def crear_venta(venta: VentaCreate):
+def crear_venta(venta: VentaCreate, user: dict = Depends(usuario_actual)):
     if venta.metodo_pago not in ["efectivo", "transferencia"]:
         raise HTTPException(400, "metodo_pago debe ser 'efectivo' o 'transferencia'")
     res = get_db().table("ventas").insert({
         "monto": venta.monto,
-        "metodo_pago": venta.metodo_pago
+        "metodo_pago": venta.metodo_pago,
+        "usuario_id": user["id"],
     }).execute()
     return res.data[0]
 
 @router.delete("/{venta_id}/anular")
-def anular_venta(venta_id: str):
-    res = get_db().table("ventas").update({"anulada": True}).eq("id", venta_id).execute()
+def anular_venta(venta_id: str, user: dict = Depends(usuario_actual)):
+    res = get_db().table("ventas").update({"anulada": True}).eq("id", venta_id).eq("usuario_id", user["id"]).execute()
     if not res.data:
         raise HTTPException(404, "Venta no encontrada")
     return {"ok": True}
 
 @router.get("/hoy")
-def ventas_hoy():
+def ventas_hoy(user: dict = Depends(usuario_actual)):
     from datetime import datetime, timedelta, timezone
     tz_ar = timezone(timedelta(hours=-3))
     ahora_ar = datetime.now(tz_ar)
@@ -35,10 +37,10 @@ def ventas_hoy():
     desde = ahora_ar.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     hasta = ahora_ar.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
 
-    res = get_db().table("resumen_ventas_diario").select("*").eq("dia", hoy).execute()
+    res = get_db().table("resumen_ventas_diario").select("*").eq("dia", hoy).eq("usuario_id", user["id"]).execute()
     ventas = res.data[0] if res.data else {"dia": hoy, "cantidad_ventas": 0, "total": 0, "total_efectivo": 0, "total_transferencia": 0}
 
-    gastos_res = get_db().table("gastos").select("monto, metodo_pago").gte("fecha", desde).lte("fecha", hasta).execute()
+    gastos_res = get_db().table("gastos").select("monto, metodo_pago").eq("usuario_id", user["id"]).gte("fecha", desde).lte("fecha", hasta).execute()
     gastos_efectivo = sum(float(g["monto"]) for g in gastos_res.data if g.get("metodo_pago", "efectivo") == "efectivo")
     gastos_transferencia = sum(float(g["monto"]) for g in gastos_res.data if g.get("metodo_pago") == "transferencia")
     total_gastos = round(gastos_efectivo + gastos_transferencia, 2)
@@ -59,27 +61,27 @@ def ventas_hoy():
     }
 
 @router.get("/resumen")
-def resumen_ventas(dias: int = 30):
-    res = get_db().table("resumen_ventas_diario").select("*").limit(dias).execute()
+def resumen_ventas(dias: int = 30, user: dict = Depends(usuario_actual)):
+    res = get_db().table("resumen_ventas_diario").select("*").eq("usuario_id", user["id"]).limit(dias).execute()
     return res.data
 
 @router.get("/recientes")
-def ventas_recientes(limite: int = 20):
-    res = get_db().table("ventas").select("*").eq("anulada", False).order("fecha", desc=True).limit(limite).execute()
+def ventas_recientes(limite: int = 20, user: dict = Depends(usuario_actual)):
+    res = get_db().table("ventas").select("*").eq("usuario_id", user["id"]).eq("anulada", False).order("fecha", desc=True).limit(limite).execute()
     return res.data
 
 
 @router.get("/dia/{fecha}")
-def ventas_por_dia(fecha: str):
+def ventas_por_dia(fecha: str, user: dict = Depends(usuario_actual)):
     """Devuelve ventas, gastos y cierre de un día específico. fecha: YYYY-MM-DD"""
     from datetime import datetime, timedelta, timezone
     tz_ar = timezone(timedelta(hours=-3))
     desde = f"{fecha}T00:00:00-03:00"
     hasta = f"{fecha}T23:59:59-03:00"
 
-    ventas = get_db().table("ventas").select("*").gte("fecha", desde).lte("fecha", hasta).order("fecha", desc=True).execute()
-    gastos = get_db().table("gastos").select("*, categorias_gasto(nombre)").gte("fecha", desde).lte("fecha", hasta).order("fecha", desc=True).execute()
-    cierre = get_db().table("cierres_caja").select("*").or_(f"fecha.eq.{fecha},cerrado_en.gte.{desde}").execute()
+    ventas = get_db().table("ventas").select("*").eq("usuario_id", user["id"]).gte("fecha", desde).lte("fecha", hasta).order("fecha", desc=True).execute()
+    gastos = get_db().table("gastos").select("*, categorias_gasto(nombre)").eq("usuario_id", user["id"]).gte("fecha", desde).lte("fecha", hasta).order("fecha", desc=True).execute()
+    cierre = get_db().table("cierres_caja").select("*").eq("usuario_id", user["id"]).or_(f"fecha.eq.{fecha},cerrado_en.gte.{desde}").execute()
 
     total_ventas = sum(float(v["monto"]) for v in ventas.data if not v.get("anulada"))
     total_gastos = sum(float(g["monto"]) for g in gastos.data)
@@ -99,15 +101,15 @@ def ventas_por_dia(fecha: str):
 
 
 @router.get("/mes/{year}/{month}")
-def ventas_por_mes(year: int, month: int):
+def ventas_por_mes(year: int, month: int, user: dict = Depends(usuario_actual)):
     """Devuelve resumen por día de un mes completo"""
     import calendar
     desde = f"{year}-{str(month).zfill(2)}-01T00:00:00-03:00"
     ultimo_dia = calendar.monthrange(year, month)[1]
     hasta = f"{year}-{str(month).zfill(2)}-{ultimo_dia}T23:59:59-03:00"
 
-    ventas = get_db().table("ventas").select("monto, metodo_pago, fecha, anulada").gte("fecha", desde).lte("fecha", hasta).execute()
-    gastos = get_db().table("gastos").select("monto, fecha, descripcion").gte("fecha", desde).lte("fecha", hasta).execute()
+    ventas = get_db().table("ventas").select("monto, metodo_pago, fecha, anulada").eq("usuario_id", user["id"]).gte("fecha", desde).lte("fecha", hasta).execute()
+    gastos = get_db().table("gastos").select("monto, fecha, descripcion").eq("usuario_id", user["id"]).gte("fecha", desde).lte("fecha", hasta).execute()
 
     # Agrupar por día
     from datetime import datetime, timezone, timedelta

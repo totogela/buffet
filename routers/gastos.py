@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from db_context import get_db
+from auth import usuario_actual
 
 router = APIRouter(prefix="/gastos", tags=["Gastos"])
 
@@ -13,12 +14,13 @@ class GastoCreate(BaseModel):
     metodo_pago: Optional[str] = "efectivo"  # "efectivo" | "transferencia"
 
 @router.post("/")
-def crear_gasto(gasto: GastoCreate):
+def crear_gasto(gasto: GastoCreate, user: dict = Depends(usuario_actual)):
     if gasto.metodo_pago not in ["efectivo", "transferencia", None]:
         raise HTTPException(400, "metodo_pago debe ser 'efectivo' o 'transferencia'")
     payload = {k: v for k, v in gasto.model_dump().items() if v is not None}
     if "categoria_id" in payload and not payload["categoria_id"]:
         del payload["categoria_id"]
+    payload["usuario_id"] = user["id"]
     try:
         res = get_db().table("gastos").insert(payload).execute()
     except Exception as e:
@@ -28,7 +30,7 @@ def crear_gasto(gasto: GastoCreate):
     return res.data[0]
 
 @router.get("/")
-def listar_gastos(dias: int = 30):
+def listar_gastos(dias: int = 30, user: dict = Depends(usuario_actual)):
     from datetime import datetime, timedelta, timezone
     tz_ar = timezone(timedelta(hours=-3))
     ahora_ar = datetime.now(tz_ar)
@@ -37,6 +39,7 @@ def listar_gastos(dias: int = 30):
     res = (
         get_db().table("gastos")
         .select("*, categorias_gasto(nombre)")
+        .eq("usuario_id", user["id"])
         .gte("fecha", desde_ar.isoformat())
         .lte("fecha", hasta_ar.isoformat())
         .order("fecha", desc=True)
@@ -50,11 +53,11 @@ def listar_categorias():
     return res.data
 
 @router.get("/diagnostico")
-def diagnostico_gastos():
+def diagnostico_gastos(user: dict = Depends(usuario_actual)):
     """Endpoint de diagnóstico: verifica conexión con la tabla gastos"""
     resultado = {}
     try:
-        res = get_db().table("gastos").select("id, monto, fecha").limit(1).execute()
+        res = get_db().table("gastos").select("id, monto, fecha").eq("usuario_id", user["id"]).limit(1).execute()
         resultado["lectura"] = "OK"
         resultado["filas_encontradas"] = len(res.data)
     except Exception as e:
@@ -64,7 +67,8 @@ def diagnostico_gastos():
         import uuid
         res = get_db().table("gastos").insert({
             "monto": 0.01,
-            "descripcion": "TEST_DIAGNOSTICO"
+            "descripcion": "TEST_DIAGNOSTICO",
+            "usuario_id": user["id"],
         }).execute()
         if res.data:
             # Eliminar el registro de prueba
@@ -79,8 +83,8 @@ def diagnostico_gastos():
 
 
 @router.delete("/{gasto_id}")
-def eliminar_gasto(gasto_id: str):
-    res = get_db().table("gastos").delete().eq("id", gasto_id).execute()
+def eliminar_gasto(gasto_id: str, user: dict = Depends(usuario_actual)):
+    res = get_db().table("gastos").delete().eq("id", gasto_id).eq("usuario_id", user["id"]).execute()
     if not res.data:
         raise HTTPException(404, "Gasto no encontrado")
     return {"ok": True}

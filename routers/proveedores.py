@@ -2,10 +2,11 @@ import re
 from datetime import date
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from db_context import get_db
+from auth import usuario_actual
 
 router = APIRouter(prefix="/proveedores", tags=["Proveedores"])
 
@@ -95,11 +96,12 @@ def productos_desde_texto(texto: str, margen: float) -> List[BoletaProducto]:
     return productos
 
 
-def obtener_o_crear_producto(proveedor_id: str, nombre: str) -> dict:
+def obtener_o_crear_producto(proveedor_id: str, nombre: str, user: dict) -> dict:
     existente = (
         get_db().table("productos_proveedor")
         .select("*")
         .eq("proveedor_id", proveedor_id)
+        .eq("usuario_id", user["id"])
         .ilike("nombre", nombre)
         .limit(1)
         .execute()
@@ -109,17 +111,17 @@ def obtener_o_crear_producto(proveedor_id: str, nombre: str) -> dict:
 
     creado = (
         get_db().table("productos_proveedor")
-        .insert({"proveedor_id": proveedor_id, "nombre": nombre})
+        .insert({"proveedor_id": proveedor_id, "nombre": nombre, "usuario_id": user["id"]})
         .execute()
     )
     return creado.data[0]
 
 
 @router.get("/")
-def listar_proveedores():
-    proveedores = get_db().table("proveedores").select("*").order("nombre").execute()
+def listar_proveedores(user: dict = Depends(usuario_actual)):
+    proveedores = get_db().table("proveedores").select("*").eq("usuario_id", user["id"]).order("nombre").execute()
     try:
-        saldos = get_db().table("saldo_proveedores").select("*").execute()
+        saldos = get_db().table("saldo_proveedores").select("*").eq("usuario_id", user["id"]).execute()
         saldo_por_proveedor = {s["proveedor_id"]: s for s in saldos.data}
     except Exception:
         saldo_por_proveedor = {}
@@ -134,33 +136,37 @@ def listar_proveedores():
 
 
 @router.post("/")
-def crear_proveedor(data: ProveedorCreate):
-    res = get_db().table("proveedores").insert(data.model_dump(exclude_none=True)).execute()
+def crear_proveedor(data: ProveedorCreate, user: dict = Depends(usuario_actual)):
+    payload = data.model_dump(exclude_none=True)
+    payload["usuario_id"] = user["id"]
+    res = get_db().table("proveedores").insert(payload).execute()
     return res.data[0]
 
 
 @router.delete("/{proveedor_id}")
-def eliminar_proveedor(proveedor_id: str):
-    res = get_db().table("proveedores").delete().eq("id", proveedor_id).execute()
+def eliminar_proveedor(proveedor_id: str, user: dict = Depends(usuario_actual)):
+    res = get_db().table("proveedores").delete().eq("id", proveedor_id).eq("usuario_id", user["id"]).execute()
     if not res.data:
         raise HTTPException(404, "Proveedor no encontrado")
     return {"ok": True}
 
 
 @router.get("/{proveedor_id}/productos")
-def productos_proveedor(proveedor_id: str):
-    res = get_db().table("ultimo_precio_producto").select("*").eq("proveedor_id", proveedor_id).execute()
+def productos_proveedor(proveedor_id: str, user: dict = Depends(usuario_actual)):
+    res = get_db().table("ultimo_precio_producto").select("*").eq("proveedor_id", proveedor_id).eq("usuario_id", user["id"]).execute()
     return res.data
 
 
 @router.post("/productos")
-def crear_producto(data: ProductoCreate):
-    res = get_db().table("productos_proveedor").insert(data.model_dump()).execute()
+def crear_producto(data: ProductoCreate, user: dict = Depends(usuario_actual)):
+    payload = data.model_dump()
+    payload["usuario_id"] = user["id"]
+    res = get_db().table("productos_proveedor").insert(payload).execute()
     return res.data[0]
 
 
 @router.post("/precios")
-def registrar_precio(data: PrecioCreate):
+def registrar_precio(data: PrecioCreate, user: dict = Depends(usuario_actual)):
     precio_venta = calcular_precio(data.precio_costo, data.margen_porcentaje)
     res = get_db().table("historial_precios").insert(
         {
@@ -168,13 +174,14 @@ def registrar_precio(data: PrecioCreate):
             "precio_costo": data.precio_costo,
             "precio_venta_sugerido": precio_venta,
             "margen_porcentaje": data.margen_porcentaje,
+            "usuario_id": user["id"],
         }
     ).execute()
     return res.data[0]
 
 
 @router.post("/boletas")
-def cargar_boleta(data: BoletaCarga):
+def cargar_boleta(data: BoletaCarga, user: dict = Depends(usuario_actual)):
     productos = list(data.productos or [])
     if data.texto:
         productos.extend(productos_desde_texto(data.texto, data.margen_porcentaje))
@@ -185,7 +192,7 @@ def cargar_boleta(data: BoletaCarga):
     total = 0.0
     for item in productos:
         margen = item.margen_porcentaje if item.margen_porcentaje is not None else data.margen_porcentaje
-        producto = obtener_o_crear_producto(data.proveedor_id, item.nombre)
+        producto = obtener_o_crear_producto(data.proveedor_id, item.nombre, user)
         precio_costo = float(item.precio_costo)
         cantidad = float(item.cantidad or 1)
         total += precio_costo * cantidad
@@ -194,7 +201,8 @@ def cargar_boleta(data: BoletaCarga):
                 producto_id=producto["id"],
                 precio_costo=precio_costo,
                 margen_porcentaje=margen,
-            )
+            ),
+            user,
         )
         creados.append(
             {
@@ -215,21 +223,23 @@ def cargar_boleta(data: BoletaCarga):
                 numero=data.numero_factura,
                 descripcion="Carga desde boleta",
                 monto_total=data.monto_factura or round(total, 2),
-            )
+            ),
+            user,
         )
 
     return {"productos": creados, "total_costo": round(total, 2), "factura": factura}
 
 
 @router.get("/precios/alertas")
-def alertas_precios():
-    productos = get_db().table("ultimo_precio_producto").select("producto_id, producto, proveedor, precio_costo").execute()
+def alertas_precios(user: dict = Depends(usuario_actual)):
+    productos = get_db().table("ultimo_precio_producto").select("producto_id, producto, proveedor, precio_costo").eq("usuario_id", user["id"]).execute()
     alertas = []
     for p in productos.data:
         historial = (
             get_db().table("historial_precios")
             .select("precio_costo, fecha")
             .eq("producto_id", p["producto_id"])
+            .eq("usuario_id", user["id"])
             .order("fecha", desc=True)
             .limit(2)
             .execute()
@@ -249,12 +259,13 @@ def calculadora_precio(costo: float, margen: float):
 
 
 @router.get("/{proveedor_id}/facturas")
-def facturas_proveedor(proveedor_id: str):
+def facturas_proveedor(proveedor_id: str, user: dict = Depends(usuario_actual)):
     try:
         res = (
             get_db().table("proveedor_facturas")
             .select("*")
             .eq("proveedor_id", proveedor_id)
+            .eq("usuario_id", user["id"])
             .order("fecha_emision", desc=True)
             .execute()
         )
@@ -264,7 +275,7 @@ def facturas_proveedor(proveedor_id: str):
 
 
 @router.post("/facturas")
-def crear_factura(data: FacturaProveedorCreate):
+def crear_factura(data: FacturaProveedorCreate, user: dict = Depends(usuario_actual)):
     try:
         res = (
             get_db().table("proveedor_facturas")
@@ -274,6 +285,7 @@ def crear_factura(data: FacturaProveedorCreate):
                     "fecha_emision": data.fecha_emision or date.today().isoformat(),
                     "monto_pagado": 0,
                     "estado": "pendiente",
+                    "usuario_id": user["id"],
                 }
             )
             .execute()
@@ -284,9 +296,9 @@ def crear_factura(data: FacturaProveedorCreate):
 
 
 @router.post("/facturas/{factura_id}/pagos")
-def registrar_pago_factura(factura_id: str, data: PagoFacturaCreate):
+def registrar_pago_factura(factura_id: str, data: PagoFacturaCreate, user: dict = Depends(usuario_actual)):
     try:
-        factura_res = get_db().table("proveedor_facturas").select("*").eq("id", factura_id).execute()
+        factura_res = get_db().table("proveedor_facturas").select("*").eq("id", factura_id).eq("usuario_id", user["id"]).execute()
         if not factura_res.data:
             raise HTTPException(404, "Factura no encontrada")
 
@@ -303,6 +315,7 @@ def registrar_pago_factura(factura_id: str, data: PagoFacturaCreate):
                     "monto": data.monto,
                     "nota": data.nota,
                     "fecha": data.fecha or date.today().isoformat(),
+                    "usuario_id": user["id"],
                 }
             )
             .execute()
@@ -311,6 +324,7 @@ def registrar_pago_factura(factura_id: str, data: PagoFacturaCreate):
             get_db().table("proveedor_facturas")
             .update({"monto_pagado": min(pagado, total), "estado": estado})
             .eq("id", factura_id)
+            .eq("usuario_id", user["id"])
             .execute()
         )
         return {"pago": pago.data[0], "factura": actualizada.data[0]}

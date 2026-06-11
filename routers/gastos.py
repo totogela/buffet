@@ -12,15 +12,18 @@ class GastoCreate(BaseModel):
     categoria_id: Optional[str] = None
     foto_url: Optional[str] = None
     metodo_pago: Optional[str] = "efectivo"  # "efectivo" | "transferencia"
+    fecha: Optional[str] = None  # YYYY-MM-DD para registrar en fecha pasada
 
 @router.post("/")
 def crear_gasto(gasto: GastoCreate, user: dict = Depends(usuario_actual)):
     if gasto.metodo_pago not in ["efectivo", "transferencia", None]:
         raise HTTPException(400, "metodo_pago debe ser 'efectivo' o 'transferencia'")
-    payload = {k: v for k, v in gasto.model_dump().items() if v is not None}
+    payload = {k: v for k, v in gasto.model_dump().items() if v is not None and k != "fecha"}
     if "categoria_id" in payload and not payload["categoria_id"]:
         del payload["categoria_id"]
     payload["usuario_id"] = user["id"]
+    if gasto.fecha:
+        payload["fecha"] = f"{gasto.fecha}T12:00:00-03:00"
     try:
         res = get_db().table("gastos").insert(payload).execute()
     except Exception as e:

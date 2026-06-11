@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 from datetime import date
 from db_context import get_db
 from auth import usuario_actual
@@ -9,16 +10,20 @@ router = APIRouter(prefix="/ventas", tags=["Ventas"])
 class VentaCreate(BaseModel):
     monto: float
     metodo_pago: str  # "efectivo" | "transferencia"
+    fecha: Optional[str] = None  # YYYY-MM-DD para registrar en fecha pasada
 
 @router.post("/")
 def crear_venta(venta: VentaCreate, user: dict = Depends(usuario_actual)):
     if venta.metodo_pago not in ["efectivo", "transferencia"]:
         raise HTTPException(400, "metodo_pago debe ser 'efectivo' o 'transferencia'")
-    res = get_db().table("ventas").insert({
+    payload = {
         "monto": venta.monto,
         "metodo_pago": venta.metodo_pago,
         "usuario_id": user["id"],
-    }).execute()
+    }
+    if venta.fecha:
+        payload["fecha"] = f"{venta.fecha}T12:00:00-03:00"
+    res = get_db().table("ventas").insert(payload).execute()
     return res.data[0]
 
 @router.delete("/{venta_id}/anular")

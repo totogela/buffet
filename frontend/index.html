@@ -598,7 +598,7 @@
 <div id="modal-cal-movimiento" class="modal-overlay" onclick="if(event.target===this)closeModal('modal-cal-movimiento')">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div class="modal-title" id="cal-mov-titulo">Agregar movimiento</div>
+    <div class="modal-title" id="cal-mov-title">Agregar movimiento</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
       <button id="cal-mov-tab-venta" class="btn btn-success" onclick="calMovSetTipo('venta')">+ Venta</button>
       <button id="cal-mov-tab-gasto" class="btn btn-ghost" style="border:2px solid var(--border)" onclick="calMovSetTipo('gasto')">- Gasto</button>
@@ -606,15 +606,15 @@
     <div class="field"><label class="label">Monto</label><input class="input" type="number" id="cal-mov-monto" placeholder="0" inputmode="decimal"></div>
     <div class="field" style="margin-bottom:8px">
       <label class="label">Método de pago</label>
-      <select class="input" id="cal-mov-metodo" onchange="calMovSetMetodo(this.value)">
-        <option value="efectivo">Efectivo</option>
-        <option value="transferencia">Transferencia</option>
-      </select>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button class="cal-mov-metodo-btn btn btn-ghost" data-metodo="efectivo" style="border:2px solid var(--green);color:var(--green)" onclick="calMovSetMetodo('efectivo')">Efectivo</button>
+        <button class="cal-mov-metodo-btn btn btn-ghost" data-metodo="transferencia" style="border:2px solid var(--border)" onclick="calMovSetMetodo('transferencia')">Transferencia</button>
+      </div>
     </div>
-    <div id="cal-mov-desc-field" class="field" style="display:none"><label class="label">Descripción (opcional)</label><input class="input" type="text" id="cal-mov-desc" placeholder="Ej: Mercadería"></div>
+    <div id="cal-mov-desc-field" class="field" style="display:none"><label class="label">Descripción (opcional)</label><input class="input" type="text" id="cal-mov-descripcion" placeholder="Ej: Mercadería"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px">
       <button class="btn btn-ghost" onclick="closeModal('modal-cal-movimiento')">Cancelar</button>
-      <button class="btn btn-primary" onclick="calMovGuardar()">Guardar</button>
+      <button class="btn btn-primary" id="cal-mov-guardar-btn" onclick="calMovGuardar()">Guardar</button>
     </div>
   </div>
 </div>
